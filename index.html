@@ -173,10 +173,18 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
         .output-header h2 {
             color: #e2e8f0;
+        }
+
+        .output-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         .copy-btn {
@@ -191,6 +199,14 @@
 
         .copy-btn:hover {
             background: #059669;
+        }
+
+        .copy-btn:nth-child(2):hover {
+            background: #7c3aed;
+        }
+
+        .copy-btn:nth-child(3):hover {
+            background: #5568d3;
         }
 
         .output-text {
@@ -380,7 +396,7 @@
 <body>
     <div class="container">
         <h1>Search String Generator</h1>
-        <p class="subtitle">Create search strings with AND/OR operators for academic databases. Saves progress in browser storage. Import functionality.</p>
+        <p class="subtitle">Create search strings with AND/OR operators for academic databases</p>
 
         <div class="toolbar">
             <button class="toolbar-btn secondary" onclick="importSearchString()">Import Search String</button>
@@ -400,8 +416,15 @@
         <div class="output-section">
             <div class="output-header">
                 <h2>Generated Search String</h2>
-                <button class="copy-btn" onclick="copyToClipboard()">Copy to Clipboard</button>
+                <div class="output-actions">
+                    <button class="copy-btn" onclick="copyToClipboard()">Copy to Clipboard</button>
+                    <button class="copy-btn" style="background: #8b5cf6;" onclick="copyShareLink()">Copy Share Link</button>
+                    <button class="copy-btn" style="background: #667eea;" onclick="searchOnScopus()">Search on Scopus</button>
+                </div>
             </div>
+            <p class="help-text" style="margin-bottom: 15px;">
+                Note: Scopus search requires login and institutional access. Share link contains the terms in the URL.
+            </p>
             <div class="output-text" id="output">
                 <span class="empty-state">Add terms above to generate your search string...</span>
             </div>
@@ -432,7 +455,103 @@
     <script>
         let latentTerms = [];
         let termIdCounter = 0;
-        const STORAGE_KEY = 'search-generator-state';
+        const STORAGE_KEY = 'boolean-search-generator-state';
+
+        // Load from URL parameters
+        function loadFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const termsParam = params.get('terms');
+            
+            if (termsParam) {
+                try {
+                    const decoded = decodeURIComponent(termsParam);
+                    const parsed = JSON.parse(decoded);
+                    latentTerms = parsed.map(group => ({
+                        id: termIdCounter++,
+                        name: group[0] || '',
+                        synonyms: group.slice(1).filter(s => s)
+                    }));
+                    return true;
+                } catch (e) {
+                    console.error('Error loading from URL:', e);
+                }
+            }
+            return false;
+        }
+
+        // Generate shareable URL
+        function generateShareURL() {
+            const termsData = latentTerms.map(term => 
+                [term.name, ...term.synonyms].filter(t => t)
+            ).filter(group => group.length > 0);
+            
+            if (termsData.length === 0) {
+                return null;
+            }
+
+            const encoded = encodeURIComponent(JSON.stringify(termsData));
+            const baseURL = window.location.origin + window.location.pathname;
+            return `${baseURL}?terms=${encoded}`;
+        }
+
+        // Copy share link to clipboard
+        function copyShareLink() {
+            const url = generateShareURL();
+            if (!url) {
+                alert('Please add some terms first before generating a share link.');
+                return;
+            }
+
+            navigator.clipboard.writeText(url).then(() => {
+                showStatus('Share link copied to clipboard!');
+            }).catch(err => {
+                alert('Failed to copy link: ' + err);
+            });
+        }
+
+        // Generate Scopus search URL
+        function generateScopusURL() {
+            const searchString = generateSearchString();
+            if (!searchString) {
+                return null;
+            }
+
+            // Format: TITLE-ABS-KEY(search string)
+            const scopusQuery = `TITLE-ABS-KEY(${searchString})`;
+            const encodedQuery = encodeURIComponent(scopusQuery);
+            
+            return `https://www.scopus.com/results/results.uri?st1=${encodedQuery}&st2=&s=${encodedQuery}&limit=10&origin=searchbasic&sort=plf-f&src=s&sot=b&sdt=b`;
+        }
+
+        // Search on Scopus
+        function searchOnScopus() {
+            const url = generateScopusURL();
+            if (!url) {
+                alert('Please add some terms first before searching on Scopus.');
+                return;
+            }
+
+            window.open(url, '_blank');
+        }
+
+        // Generate search string (helper function)
+        function generateSearchString() {
+            const parts = latentTerms
+                .filter(term => term.name || term.synonyms.some(s => s))
+                .map(term => {
+                    const allTerms = [term.name, ...term.synonyms].filter(t => t.trim());
+                    if (allTerms.length === 0) return '';
+                    if (allTerms.length === 1) return `"${allTerms[0]}"`;
+                    return `(${allTerms.map(t => `"${t}"`).join(' OR ')})`;
+                })
+                .filter(p => p);
+
+            if (parts.length === 0) {
+                return '';
+            }
+
+            return parts.join(' AND ');
+        }
 
         // Auto-save to localStorage
         function autoSave() {
@@ -656,23 +775,13 @@
 
         function updateOutput() {
             const output = document.getElementById('output');
-            
-            const parts = latentTerms
-                .filter(term => term.name || term.synonyms.some(s => s))
-                .map(term => {
-                    const allTerms = [term.name, ...term.synonyms].filter(t => t.trim());
-                    if (allTerms.length === 0) return '';
-                    if (allTerms.length === 1) return `"${allTerms[0]}"`;
-                    return `(${allTerms.map(t => `"${t}"`).join(' OR ')})`;
-                })
-                .filter(p => p);
+            const searchString = generateSearchString();
 
-            if (parts.length === 0) {
+            if (!searchString) {
                 output.innerHTML = '<span class="empty-state">Add terms above to generate your search string...</span>';
                 return;
             }
 
-            const searchString = parts.join(' AND ');
             output.textContent = searchString;
         }
 
@@ -696,20 +805,28 @@
 
         // Initialize with example data or load saved data
         function initializeExample() {
-            // Try to load saved data first
+            // Priority 1: Load from URL parameters (sharing)
+            if (loadFromURL()) {
+                renderLatentTerms();
+                updateOutput();
+                autoSave(); // Save URL params to localStorage
+                return;
+            }
+
+            // Priority 2: Load from localStorage (auto-save)
             if (autoLoad()) {
                 renderLatentTerms();
                 updateOutput();
                 return;
             }
 
-            // If no saved data, use example data
+            // Priority 3: Use example data
             latentTerms = [
                 {
                     id: termIdCounter++,
                     name: 'log anomaly detection',
                     synonyms: ['log-based anomaly detection', 'log anomaly', 'anomaly detection in logs']
-                },
+                }
             ];
             renderLatentTerms();
             updateOutput();
